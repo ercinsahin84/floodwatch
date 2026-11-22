@@ -106,6 +106,32 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
 .foot a { color: var(--water); }
 .notes { color: var(--watch); font-size: 13px; margin: 10px 0 0; }
 
+.gauges { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.gauge { min-width: 0; text-align: center; }
+.gauge svg { width: 100%; height: auto; display: block; max-width: 260px; margin: 0 auto; }
+.gauge .k { font: 600 12px/1.2 var(--f-display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 2px; }
+.gauge .cap { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.gauge .cap b { color: var(--ink); font-weight: 600; }
+.arrow { display: inline-block; font-weight: 700; color: var(--water); }
+.src { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+
+.tl-list { list-style: none; margin: 0 0 14px; padding: 0; }
+.tl-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.tl-list li:last-child { border-bottom: 0; }
+.tl-who { flex: 1; min-width: 0; }
+.tl-who .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-who .ph { font-family: var(--f-num); font-size: 13px; color: var(--muted); }
+.btn { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 14px/1 var(--f-body);
+  padding: 10px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.btn.primary { background: var(--water); border-color: var(--water); color: #fff; }
+.btn.danger { color: var(--flood); border-color: var(--flood); }
+.btn.link { border: 0; background: none; color: var(--muted); padding: 8px 0; font-weight: 500; text-decoration: underline; }
+.tl-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
+.tl-form input { font: 16px var(--f-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-width: 0; width: 100%; }
+.tl-msg { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.tl-msg.err { color: var(--flood); }
+.tl-empty { color: var(--muted); margin: 0 0 12px; }
+
 @media (max-width: 560px) {
   .status { grid-template-columns: 1fr; }
   .staff { display: none; }
@@ -142,6 +168,15 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
   </section>
 
   <section class="panel">
+    <h2>Wind &amp; pressure &middot; live</h2>
+    <div class="gauges">
+      <div class="gauge"><div class="k">Wind</div><svg id="gWind" viewBox="0 0 200 150" role="img" aria-label="Wind speed gauge"></svg><div class="cap" id="cWind">&ndash;</div></div>
+      <div class="gauge"><div class="k">Pressure</div><svg id="gPres" viewBox="0 0 200 150" role="img" aria-label="Air pressure gauge"></svg><div class="cap" id="cPres">&ndash;</div></div>
+    </div>
+    <p class="src" id="metSrc"></p>
+  </section>
+
+  <section class="panel">
     <h2>Water level &middot; last 24 h and next 48 h</h2>
     <svg class="chart" id="chart" viewBox="0 0 720 300" role="img" aria-label="Tide chart"></svg>
     <div class="legend">
@@ -160,6 +195,11 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
   <section class="panel">
     <h2>Right now</h2>
     <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel" id="textPanel">
+    <h2>Text alerts &middot; who gets them</h2>
+    <div id="tl"></div>
   </section>
 
   <section class="panel">
@@ -229,6 +269,27 @@ async function pressureForecast() {
   j.hourly.time.forEach((t, i) => { const p = j.hourly.pressure_msl[i]; if (p != null) out.push([P(t), p]); });
   return out;
 }
+/* Live wind and pressure: NOAA's Tacoma gauge if it reports, else Open-Meteo's current model value. */
+async function metNow(now) {
+  try {
+    const [w, a] = await Promise.all([noaa("wind", addH(now, -3), now), noaa("air_pressure", addH(now, -3), now)]);
+    const wl = w.filter(r => r.s !== "" && r.s != null);
+    const al = a.filter(r => r.v !== "" && r.v != null);
+    if (!wl.length || !al.length) throw new Error("no met data");
+    const KT = 1.15078, last = wl[wl.length - 1], p0 = al[0], p1 = al[al.length - 1];
+    if (now - P(last.t) > 2 * 36e5) throw new Error("met data stale");
+    return { src: "NOAA Tacoma gauge (measured)", t: iso(P(last.t)), wind: +last.s * KT,
+      gust: last.g !== "" && last.g != null ? +last.g * KT : null, dir: last.d !== "" ? +last.d : null,
+      p: +p1.v, trend: (P(p1.t) - P(p0.t)) >= 2 * 36e5 ? +p1.v - +p0.v : null };
+  } catch (e) {
+    const q = new URLSearchParams({ latitude: CFG.lat, longitude: CFG.lon, timezone: "America/Los_Angeles", wind_speed_unit: "mph",
+      current: "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl" });
+    const c = (await getJSON("https://api.open-meteo.com/v1/forecast?" + q)).current;
+    return { src: "Open-Meteo, Browns Point (model, updates every 15 min)", t: iso(P(c.time)), wind: c.wind_speed_10m,
+      gust: c.wind_gusts_10m ?? null, dir: c.wind_direction_10m ?? null, p: c.pressure_msl, trend: null };
+  }
+}
+
 function pressureAt(series, t) {
   let best = null, bd = Infinity;
   for (const [tt, p] of series) { const d = Math.abs(tt - t); if (d < bd) { bd = d; best = p; } }
@@ -250,13 +311,14 @@ async function loadData() {
   const notes = [];
   const soft = async (fn, label, dflt) => { try { return await fn(); } catch (e) { notes.push(`${label} unavailable right now`); return dflt; } };
 
-  const [curveRaw, hilo, obsRaw, pushPred, pres, nws] = await Promise.all([
+  const [curveRaw, hilo, obsRaw, pushPred, pres, nws, met] = await Promise.all([
     noaa("predictions", start, end, { interval: "30" }),
     noaa("predictions", start, end, { interval: "hilo" }),
     soft(() => noaa("water_level", start, now), "Gauge readings", []),
     soft(() => noaa("predictions", addH(now, -3), now, { interval: "6" }), "Storm push", []),
     soft(pressureForecast, "Pressure forecast", []),
-    soft(nwsCoastalAlerts, "NWS alerts", [])
+    soft(nwsCoastalAlerts, "NWS alerts", []),
+    soft(() => metNow(now), "Live wind", null)
   ]);
 
   const curve = curveRaw.map(r => [P(r.t), +r.v]);
@@ -305,6 +367,7 @@ async function loadData() {
     p_now: pressureAt(pres, now),
     p_3h: pressureAt(pres, addH(now, -3))
   };
+  d.met = met;
   return d;
 }
 
@@ -454,16 +517,62 @@ function render(D, staleNote) {
     $("highs").innerHTML = s;
   })();
 
+  /* wind & pressure gauges */
+  (function gauges() {
+    const M = D.met, c = D.current || {};
+    const cx = 100, cy = 96, r = 80;
+    const pt = (a, rr = r) => [cx + rr * Math.cos(a), cy + rr * Math.sin(a)];
+    const ang = (v, lo, hi) => Math.PI + (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * Math.PI;
+    const arc = (a0, a1, col, w = 13) => { const [x0, y0] = pt(a0), [x1, y1] = pt(a1);
+      return `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${r} ${r} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" fill="none" stroke="${col}" stroke-width="${w}"/>`; };
+    function dial(lo, hi, bands, ticks, val, mark, big, unit, fmtTick) {
+      let s = "";
+      for (const [a, b, col] of bands) s += `<g opacity=".4">${arc(ang(a, lo, hi), ang(b, lo, hi), col, 12)}</g>`;
+      for (const t of ticks) { const a = ang(t, lo, hi), [x0, y0] = pt(a, r - 10), [x1, y1] = pt(a, r - 16), [tx, ty] = pt(a, r - 27);
+        s += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--muted)" stroke-width="1.2"/>`;
+        s += `<text x="${tx}" y="${ty + 3.5}" text-anchor="middle" font-family="var(--f-num)" font-size="10" fill="var(--muted)">${fmtTick(t)}</text>`; }
+      if (mark != null) { const a = ang(mark, lo, hi), [x0, y0] = pt(a, r - 9), [x1, y1] = pt(a, r + 9);
+        s += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--flood)" stroke-width="3.5" stroke-linecap="round"/>`; }
+      if (val != null) { const a = ang(val, lo, hi), [x, y] = pt(a, r - 6);
+        s += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>`; }
+      s += `<circle cx="${cx}" cy="${cy}" r="5" fill="var(--ink)"/>`;
+      s += `<text x="${cx}" y="${cy + 34}" text-anchor="middle" font-family="var(--f-num)" font-size="26" font-weight="500" fill="var(--ink)">${big}</text>`;
+      s += `<text x="${cx}" y="${cy + 50}" text-anchor="middle" font-family="var(--f-body)" font-size="11" fill="var(--muted)">${unit}</text>`;
+      return s;
+    }
+    const DIRS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    const compass = d => DIRS[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
+
+    // wind: 0-60 mph; 25+ strong, 40+ storm
+    const w = M ? M.wind : null, g = M ? M.gust : null;
+    $("gWind").innerHTML = dial(0, 60, [[0, 25, "var(--ok)"], [25, 40, "var(--watch)"], [40, 60, "var(--flood)"]],
+      [0, 20, 40, 60], w, g, w != null ? Math.round(w) : "&ndash;", "mph", t => t);
+    $("cWind").innerHTML = M ? `${g != null ? `Gusts <b>${Math.round(g)}</b> mph` : "No gust data"}` +
+      (M.dir != null ? ` &middot; from <b>${compass(M.dir)}</b> <span class="arrow" style="transform:rotate(${(M.dir + 180) % 360}deg)" aria-hidden="true">&uarr;</span>` : "") : "No live wind data";
+
+    // pressure: 970-1040 hPa; under 1000 is storm territory for your floods
+    const p = M ? M.p : c.p_now;
+    const trend = M && M.trend != null ? M.trend : (c.p_now != null && c.p_3h != null ? c.p_now - c.p_3h : null);
+    $("gPres").innerHTML = dial(970, 1040, [[970, 1000, "var(--flood)"], [1000, 1010, "var(--watch)"], [1010, 1040, "var(--ok)"]],
+      [970, 990, 1010, 1030], p, null, p != null ? Math.round(p) : "&ndash;", "hPa", t => t);
+    const tw = trend == null ? "" : trend <= -1 ? "falling" : trend >= 1 ? "rising" : "steady";
+    $("cPres").innerHTML = p != null ? `<b>${(p * 0.02953).toFixed(2)}</b> inHg` + (tw ? ` &middot; ${tw}${tw === "steady" ? "" : ` ${Math.abs(trend).toFixed(1)} hPa`} in 3 h` : "") : "No pressure data";
+
+    $("metSrc").textContent = M ? `${M.src}, ${clock(T(M.t))}. The red mark on the wind dial is the gust.` : "Live wind and pressure unavailable right now.";
+  })();
+
   /* right now */
   (function stats() {
     const c = D.current || {};
     const push = c.push ?? 0;
-    const trend = (c.p_now != null && c.p_3h != null) ? c.p_now - c.p_3h : null;
+    const M = D.met;
+    const pNow = M ? M.p : c.p_now;
+    const trend = M && M.trend != null ? M.trend : (c.p_now != null && c.p_3h != null) ? c.p_now - c.p_3h : null;
     const tr = trend == null ? "" : trend <= -1 ? "falling" : trend >= 1 ? "rising" : "steady";
     const items = [
       ["Water now", c.level != null ? `${c.level.toFixed(1)} <small>ft</small>` : "&ndash;", c.level_t ? "at " + clock(T(c.level_t)) : "gauge offline"],
       ["Storm push", `${push >= 0 ? "+" : ""}${push.toFixed(1)} <small>ft</small>`, push > 0.6 ? "water running high" : push < -0.2 ? "running low" : "near normal"],
-      ["Air pressure", c.p_now != null ? `${Math.round(c.p_now)} <small>hPa</small>` : "&ndash;", tr ? `${tr}, ${trend > 0 ? "+" : ""}${trend.toFixed(1)} in 3 h` : ""],
+      ["Air pressure", pNow != null ? `${Math.round(pNow)} <small>hPa</small>` : "&ndash;", tr ? `${tr}, ${trend > 0 ? "+" : ""}${trend.toFixed(1)} in 3 h` : ""],
       ["NWS alerts", D.nws && D.nws.length ? `${D.nws.length}` : "None", D.nws && D.nws.length ? "coastal flood" : "for Browns Point"]
     ];
     $("stats").innerHTML = items.map(([k, v, s]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${esc(s)}</div></div>`).join("");
@@ -506,11 +615,114 @@ async function refresh() {
     busy = false; btn.disabled = false; btn.textContent = "Refresh";
   }
 }
-$("refresh").addEventListener("click", refresh);
+$("refresh").addEventListener("click", () => { refresh(); loadList(); });
 let rsz; window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setTimeout(() => { const c = readCache(); if (c) render(c); }, 200); });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && Date.now() - lastLoad > 5 * 60e3) refresh();
+  if (document.visibilityState === "visible" && Date.now() - lastLoad > 5 * 60e3) { refresh(); loadList(); }
 });
+/* ---------------- text alert list ----------------
+   The list lives on the Mac (text_to.txt). This phone sends the whole list to a
+   private ntfy topic; the Mac checks it every hour, applies it and posts it back. */
+const PAIR_KEY = "floodwatch-pair", PEOPLE_KEY = "floodwatch-people";
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+const lsDel = k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
+let people = (() => { try { return JSON.parse(lsGet(PEOPLE_KEY) || "[]"); } catch (e) { return []; } })();
+let tlMsg = "", tlErr = false, armed = null, tlBusy = false;
+const listURL = () => "https://ntfy.sh/" + encodeURIComponent(lsGet(PAIR_KEY)) + "-list";
+function normPhone(raw) {
+  const x = String(raw).replace(/[^\d+]/g, "").replace(/^\+/, "");
+  if (x.length === 10) return "+1" + x;
+  if (x.length === 11 && x[0] === "1") return "+" + x;
+  return null;
+}
+function fmtPhone(n) {
+  const d = String(n).replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : n;
+}
+const cleanName = s => String(s).replace(/[^A-Za-z\u00C0-\u024F '&.]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+function ago(sec) {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - sec) / 60));
+  return m < 2 ? "just now" : m < 90 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+}
+function setMsg(t, err) { tlMsg = t; tlErr = !!err; }
+
+async function loadList() {
+  if (!lsGet(PAIR_KEY)) { renderList(); return; }
+  try {
+    const r = await fetch(listURL() + "/json?poll=1&since=all", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const msgs = (await r.text()).split("\n").filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch (e) { return null; } })
+      .filter(e => e && e.event === "message");
+    if (msgs.length) {
+      const m = msgs[msgs.length - 1]; let b = null;
+      try { b = JSON.parse(m.message); } catch (e) { /* not ours */ }
+      if (b && Array.isArray(b.people)) {
+        people = b.people; lsSet(PEOPLE_KEY, JSON.stringify(people));
+        setMsg(b.source === "mac" ? `On your Mac \u2713 (confirmed ${ago(m.time)})` : "Saved. Your Mac picks up changes within the hour.");
+      }
+    } else {
+      setMsg("Waiting for your Mac to send the list. It checks every hour, starting after tonight's 7 PM run.");
+    }
+  } catch (e) {
+    setMsg("Couldn't reach the list right now. Showing the last copy on this phone.", true);
+  }
+  renderList();
+}
+async function saveList(next, okText) {
+  if (tlBusy) return;
+  tlBusy = true; people = next; lsSet(PEOPLE_KEY, JSON.stringify(people)); setMsg("Saving\u2026"); renderList();
+  try {
+    const r = await fetch(listURL(), { method: "POST",
+      body: JSON.stringify({ v: 1, source: "phone", updated: new Date().toISOString(), people }) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    setMsg(okText + " Your Mac picks it up within the hour.");
+  } catch (e) {
+    setMsg("Couldn't save. Check your connection and try again.", true);
+  }
+  tlBusy = false; renderList();
+}
+function renderList() {
+  const el = $("tl");
+  if (!lsGet(PAIR_KEY)) {
+    el.innerHTML = `<p class="tl-empty">Pair this phone with your Mac once to add or remove people who get flood texts.</p>
+      <div class="tl-form" style="grid-template-columns:1fr auto"><input id="pairIn" placeholder="Pairing code" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <button class="btn primary" data-act="pair" type="button">Pair</button></div>
+      <p class="tl-msg${tlErr ? " err" : ""}">${esc(tlMsg)}</p>`;
+    return;
+  }
+  const rows = people.map((p, i) => `<li><div class="tl-who"><div class="nm">${esc(p.name || "No name")}</div><div class="ph">${esc(fmtPhone(p.number))}</div></div>
+    <button class="btn${armed === i ? " danger" : ""}" data-act="rm" data-i="${i}" type="button">${armed === i ? "Tap to confirm" : "Remove"}</button></li>`).join("");
+  el.innerHTML = (people.length ? `<ul class="tl-list">${rows}</ul>` : `<p class="tl-empty">No one gets texts right now.</p>`) +
+    `<div class="tl-form"><input id="tlName" placeholder="Name" autocomplete="off"><input id="tlNum" type="tel" inputmode="tel" placeholder="Phone number" autocomplete="off">
+     <button class="btn primary" data-act="add" type="button">Add</button></div>
+     <p class="tl-msg${tlErr ? " err" : ""}">${esc(tlMsg)}</p>
+     <button class="btn link" data-act="unpair" type="button">Unpair this phone</button>`;
+}
+$("tl").addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const act = b.dataset.act;
+  if (act === "pair") {
+    const code = $("pairIn").value.trim();
+    if (!/^[A-Za-z0-9_-]{6,64}$/.test(code)) { setMsg("That doesn't look like a pairing code.", true); renderList(); return; }
+    lsSet(PAIR_KEY, code); setMsg("Paired. Loading the list\u2026"); renderList(); loadList();
+  } else if (act === "add") {
+    const name = cleanName($("tlName").value), num = normPhone($("tlNum").value);
+    if (!num) { setMsg("Enter a 10-digit US phone number.", true); renderList(); return; }
+    if (people.some(p => p.number === num)) { setMsg("That number is already on the list.", true); renderList(); return; }
+    armed = null; saveList([...people, { name, number: num }], `Added ${name || fmtPhone(num)}.`);
+  } else if (act === "rm") {
+    const i = +b.dataset.i;
+    if (armed !== i) { armed = i; renderList(); return; }
+    const who = people[i]; armed = null;
+    saveList(people.filter((_, j) => j !== i), `Removed ${who.name || fmtPhone(who.number)}.`);
+  } else if (act === "unpair") {
+    lsDel(PAIR_KEY); lsDel(PEOPLE_KEY); people = []; setMsg(""); renderList();
+  }
+});
+renderList(); loadList();
+
 const cached0 = readCache();
 if (cached0) { try { render(cached0, "Updating…"); } catch (e) { /* ignore */ } }
 refresh();
