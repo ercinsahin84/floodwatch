@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flood Watch</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flood Watch">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#eef3f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b141a" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --bg: #eef3f6; --surface: #ffffff; --ink: #11202b; --muted: #5a6b78; --line: #d6e0e7;
+  --water: #1d6aa8; --water-soft: rgba(29,106,168,.14); --pred: #8a9aa7;
+  --flood: #c0352e; --flood-soft: rgba(192,53,46,.10);
+  --watch: #b8730a; --watch-soft: rgba(184,115,10,.13);
+  --ok: #2c7a58; --ok-soft: rgba(44,122,88,.12);
+  --night: rgba(17,32,43,.045);
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --f-body: "IBM Plex Sans", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --f-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b141a; --surface: #121e26; --ink: #e4edf2; --muted: #8b9eab; --line: #22333f;
+  --water: #58a6e3; --water-soft: rgba(88,166,227,.16); --pred: #6c7f8c;
+  --flood: #f0675e; --flood-soft: rgba(240,103,94,.13);
+  --watch: #e6a23c; --watch-soft: rgba(230,162,60,.14);
+  --ok: #4fb386; --ok-soft: rgba(79,179,134,.13);
+  --night: rgba(255,255,255,.03); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0b141a; --surface: #121e26; --ink: #e4edf2; --muted: #8b9eab; --line: #22333f;
+  --water: #58a6e3; --water-soft: rgba(88,166,227,.16); --pred: #6c7f8c;
+  --flood: #f0675e; --flood-soft: rgba(240,103,94,.13);
+  --watch: #e6a23c; --watch-soft: rgba(230,162,60,.14);
+  --ok: #4fb386; --ok-soft: rgba(79,179,134,.13);
+  --night: rgba(255,255,255,.03); color-scheme: dark; }
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: max(16px, env(safe-area-inset-top, 0px)); padding-bottom: max(32px, env(safe-area-inset-bottom, 0px)); }
+.wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { font: 700 22px/1.1 var(--f-display); letter-spacing: .01em; margin: 0; }
+.brand span { color: var(--water); }
+.where { color: var(--muted); font-size: 12.5px; }
+.updated { font-family: var(--f-num); font-size: 11.5px; color: var(--muted); text-align: right; }
+.refresh { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  font: 600 13px/1 var(--f-display); letter-spacing: .04em; text-transform: uppercase;
+  padding: 10px 12px; border-radius: 8px; margin-top: 4px; cursor: pointer; }
+.refresh[disabled] { opacity: .5; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+
+.status { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 7px; font: 600 12px/1 var(--f-display); text-transform: uppercase;
+  letter-spacing: .09em; padding: 6px 10px 6px 8px; border-radius: 999px; color: var(--muted); background: var(--bg); }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.lv-ok .pill { color: var(--ok); background: var(--ok-soft); }
+.lv-watch .pill { color: var(--watch); background: var(--watch-soft); }
+.lv-warn .pill { color: var(--flood); background: var(--flood-soft); }
+.headline { font: 700 28px/1.1 var(--f-display); margin: 12px 0 6px; text-wrap: balance; }
+.lv-warn .headline { color: var(--flood); }
+.detail { color: var(--muted); margin: 0; max-width: 46ch; }
+.detail b { color: var(--ink); font-weight: 600; }
+.alertline { margin: 10px 0 0; font-weight: 600; color: var(--watch); }
+.staff { width: 96px; height: 250px; display: block; }
+
+.chart { width: 100%; height: auto; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+
+.tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tbl th { text-align: left; font: 500 11.5px/1.2 var(--f-body); text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  padding: 0 8px 8px 0; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 10px 8px 10px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl .r { text-align: right; padding-right: 0; }
+.tbl .sub { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.tbl td.num, .tbl td:first-child { white-space: nowrap; }
+.tag { font: 600 11px/1 var(--f-display); text-transform: uppercase; letter-spacing: .08em; padding: 4px 7px; border-radius: 4px; white-space: nowrap; }
+.tag.ok { color: var(--ok); background: var(--ok-soft); }
+.tag.watch { color: var(--watch); background: var(--watch-soft); }
+.tag.warn { color: var(--flood); background: var(--flood-soft); }
+.tag.past { color: var(--muted); background: transparent; border: 1px solid var(--line); }
+.scroll { overflow-x: auto; }
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font: 500 22px/1.25 var(--f-num); font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 13px; color: var(--muted); font-weight: 400; }
+.stat .s { font-size: 12px; color: var(--muted); }
+
+.foot { color: var(--muted); font-size: 12.5px; line-height: 1.55; display: grid; gap: 8px; }
+.foot p { margin: 0; max-width: 72ch; }
+.foot a { color: var(--water); }
+.notes { color: var(--watch); font-size: 13px; margin: 10px 0 0; }
+
+@media (max-width: 560px) {
+  .status { grid-template-columns: 1fr; }
+  .staff { display: none; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .headline { font-size: 25px; }
+  .hide-sm { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 class="brand">Flood <span>Watch</span></h1>
+      <div class="where">Beach Dr NE &middot; NOAA Tacoma gauge 9446484</div>
+    </div>
+    <div>
+      <div class="updated" id="updated">Loading&hellip;</div>
+      <div style="text-align:right"><button class="refresh" id="refresh" type="button">Refresh</button></div>
+    </div>
+  </header>
+
+  <section class="panel" id="statusPanel">
+    <div class="status">
+      <div>
+        <span class="pill" id="pill">Checking</span>
+        <p class="headline" id="headline">Getting the latest tides&hellip;</p>
+        <p class="detail" id="detail"></p>
+        <p class="alertline" id="nwsline" hidden></p>
+        <p class="notes" id="notes" hidden></p>
+      </div>
+      <svg class="staff" id="staff" viewBox="0 0 96 250" role="img" aria-label="Tide staff"></svg>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Water level &middot; last 24 h and next 48 h</h2>
+    <svg class="chart" id="chart" viewBox="0 0 720 300" role="img" aria-label="Tide chart"></svg>
+    <div class="legend">
+      <span><i style="border-color:var(--water)"></i>Measured</span>
+      <span><i style="border-color:var(--water);border-top-style:dashed"></i>Expected with storm</span>
+      <span><i style="border-color:var(--pred)"></i>Tide table</span>
+      <span><i style="border-color:var(--flood);border-top-style:dashed"></i>Your flood line</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>High tides</h2>
+    <div class="scroll"><table class="tbl" id="highs"></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Right now</h2>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Your past floods at this gauge</h2>
+    <div class="scroll"><table class="tbl" id="history"></table></div>
+  </section>
+
+  <div class="foot">
+    <p>Expected peak = tide table + 0.33 ft + one third of the storm push measured now (three quarters when forecast pressure is under 1000 hPa) + 0.036 ft for every hPa below 1013. Typical error about &plusmn;0.35 ft; big storms tend to run higher. An NWS coastal flood alert with an estimate of 13.5 ft or more counts as Flood likely.</p>
+    <p>Data loads live from NOAA, Open-Meteo and the National Weather Service each time you open the app. Text and push alerts still come from the 7 PM check on your Mac. <a href="https://tidesandcurrents.noaa.gov/stationhome.html?id=9446484">NOAA Tacoma page</a></p>
+  </div>
+</div>
+
+<script>
+/* ---------------- settings (same as flood_watch.py) ---------------- */
+const CFG = {
+  station: "9446484", lat: 47.30, lon: -122.42,
+  flood: 14.4, warn: 14.0, watch: 13.5, lookahead: 26,
+  base: 0.33, kPush: 0.33, kPushStorm: 0.75, stormP: 1000, kPress: 0.036, err: 0.35
+};
+const HISTORY = [
+  { date: "Dec 27, 2022", pred: 13.2, peak: 15.6, flooded: true },
+  { date: "Dec 18, 2024", pred: 13.0, peak: 14.6, flooded: true },
+  { date: "Nov 13, 2020", pred: 12.8, peak: 14.2, flooded: false },
+  { date: "Nov 15, 2021", pred: 12.0, peak: 13.9, flooded: false }
+];
+const NOAA = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter";
+const CACHE_KEY = "floodwatch-last";
+
+/* All times are handled as Tacoma wall-clock time, whatever the phone's zone. */
+const pad = n => String(n).padStart(2, "0");
+function nowPT() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit",
+    day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+  const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
+  return new Date(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute);
+}
+function P(s) {
+  const m = String(s).match(/(\d+)-(\d+)-(\d+)[ T](\d+):(\d+)/);
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+}
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const noaaDate = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const addH = (d, h) => new Date(+d + h * 36e5);
+const r2 = v => Math.round(v * 100) / 100;
+
+async function getJSON(url) {
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal, cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally { clearTimeout(tm); }
+}
+async function noaa(product, begin, end, extra = {}) {
+  const q = new URLSearchParams({ product, application: "FloodWatch", station: CFG.station, datum: "MLLW",
+    time_zone: "lst_ldt", units: "english", format: "json", begin_date: noaaDate(begin), end_date: noaaDate(end), ...extra });
+  const j = await getJSON(NOAA + "?" + q);
+  if (j.error) throw new Error(j.error.message || "NOAA error");
+  return j.predictions || j.data || [];
+}
+async function pressureForecast() {
+  const q = new URLSearchParams({ latitude: CFG.lat, longitude: CFG.lon, hourly: "pressure_msl",
+    timezone: "America/Los_Angeles", forecast_days: 3, past_days: 1 });
+  const j = await getJSON("https://api.open-meteo.com/v1/forecast?" + q);
+  const out = [];
+  j.hourly.time.forEach((t, i) => { const p = j.hourly.pressure_msl[i]; if (p != null) out.push([P(t), p]); });
+  return out;
+}
+function pressureAt(series, t) {
+  let best = null, bd = Infinity;
+  for (const [tt, p] of series) { const d = Math.abs(tt - t); if (d < bd) { bd = d; best = p; } }
+  return bd <= 2 * 36e5 ? best : null;
+}
+async function nwsCoastalAlerts() {
+  const j = await getJSON(`https://api.weather.gov/alerts/active?point=${CFG.lat},${CFG.lon}`);
+  return (j.features || []).filter(f => /coastal flood/i.test(f.properties.event || ""))
+    .map(f => f.properties.headline || f.properties.event);
+}
+function surgeAdj(push, p) {
+  const k = (p != null && p < CFG.stormP) ? CFG.kPushStorm : CFG.kPush;
+  return CFG.base + k * push + CFG.kPress * (1013 - (p ?? 1013));
+}
+
+async function loadData() {
+  const now = nowPT();
+  const start = addH(now, -24), end = addH(now, 48);
+  const notes = [];
+  const soft = async (fn, label, dflt) => { try { return await fn(); } catch (e) { notes.push(`${label} unavailable right now`); return dflt; } };
+
+  const [curveRaw, hilo, obsRaw, pushPred, pres, nws] = await Promise.all([
+    noaa("predictions", start, end, { interval: "30" }),
+    noaa("predictions", start, end, { interval: "hilo" }),
+    soft(() => noaa("water_level", start, now), "Gauge readings", []),
+    soft(() => noaa("predictions", addH(now, -3), now, { interval: "6" }), "Storm push", []),
+    soft(pressureForecast, "Pressure forecast", []),
+    soft(nwsCoastalAlerts, "NWS alerts", [])
+  ]);
+
+  const curve = curveRaw.map(r => [P(r.t), +r.v]);
+  const obs = obsRaw.filter(r => r.v !== null && r.v !== "").map(r => [P(r.t), +r.v, r.t]);
+
+  // storm push: measured minus predicted over the last 3 hours
+  let push = 0;
+  const prd = Object.fromEntries(pushPred.map(r => [r.t, +r.v]));
+  const cutoff = addH(now, -3);
+  const diffs = obs.filter(o => o[0] >= cutoff && prd[o[2]] != null).map(o => o[1] - prd[o[2]]);
+  if (diffs.length >= 5) push = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+  else if (obs.length) notes.push("Storm push unavailable right now");
+
+  const adj = t => surgeAdj(push, pressureAt(pres, t));
+  const d = { updated: iso(now), flood: CFG.flood, warn: CFG.warn, watch: CFG.watch, err: CFG.err, history: HISTORY, notes };
+  d.pred = curve.map(([t, v]) => [iso(t), r2(v)]);
+  const thin = obs.filter((_, i) => i % 2 === 0);
+  if (obs.length && thin[thin.length - 1] !== obs[obs.length - 1]) thin.push(obs[obs.length - 1]);
+  d.obs = thin.map(([t, v]) => [iso(t), r2(v)]);
+  d.expect = curve.filter(([t]) => t >= addH(now, -0.5)).map(([t, v]) => [iso(t), r2(v + adj(t))]);
+
+  const highs = []; let top = null;
+  for (const r of hilo) {
+    if (r.type !== "H") continue;
+    const t = P(r.t), pv = +r.v, h = { t: iso(t), pred: r2(pv) };
+    if (t <= now) {
+      const near = obs.filter(([tt]) => Math.abs(tt - t) <= 90 * 6e4).map(o => o[1]);
+      h.past = true;
+      if (near.length) h.actual = r2(Math.max(...near));
+    } else {
+      h.p = pressureAt(pres, t);
+      h.est = r2(pv + adj(t));
+      h.soon = t <= addH(now, CFG.lookahead);
+      if (h.soon && (top === null || h.est > top)) top = h.est;
+    }
+    highs.push(h);
+  }
+  let level = "ok";
+  if (top !== null && (top >= CFG.warn || (nws.length && top >= CFG.watch))) level = "warn";
+  else if ((top !== null && top >= CFG.watch) || nws.length) level = "watch";
+  Object.assign(d, { highs, level, nws });
+  d.current = {
+    push: r2(push),
+    level: obs.length ? r2(obs[obs.length - 1][1]) : null,
+    level_t: obs.length ? iso(obs[obs.length - 1][0]) : null,
+    p_now: pressureAt(pres, now),
+    p_3h: pressureAt(pres, addH(now, -3))
+  };
+  return d;
+}
+
+/* ---------------- rendering ---------------- */
+const $ = id => document.getElementById(id);
+const T = s => P(s);
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LABEL = { ok: "Safe", watch: "Heads-up", warn: "Flood likely" };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ft = v => `${v.toFixed(1)} ft`;
+function clock(d) { let h = d.getHours(), m = d.getMinutes(), ap = h < 12 ? "AM" : "PM"; h = h % 12 || 12; return `${h}:${pad(m)} ${ap}`; }
+
+function render(D, staleNote) {
+  const NOW = T(D.updated);
+  const dayName = d => {
+    const a = new Date(NOW); a.setHours(0, 0, 0, 0);
+    const b = new Date(d); b.setHours(0, 0, 0, 0);
+    const diff = Math.round((b - a) / 864e5);
+    return diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : diff === -1 ? "Yesterday" : DAYS[d.getDay()];
+  };
+  const when = d => `${dayName(d)} ${clock(d)}`;
+  const lower = s => s.replace("Today", "today").replace("Tomorrow", "tomorrow");
+  const gapTxt = v => v >= 0 ? `${v.toFixed(1)} ft` : `${(-v).toFixed(1)} ft over`;
+  const levelOf = v => v >= D.warn ? "warn" : v >= D.watch ? "watch" : "ok";
+
+  $("updated").textContent = "Updated " + when(NOW);
+
+  /* status */
+  const future = D.highs.filter(h => !h.past);
+  const soon = future.filter(h => h.soon);
+  const pool = soon.length ? soon : future;
+  const PEAK = pool.length ? pool.reduce((a, b) => (b.est > a.est ? b : a)) : null;
+  const lv = D.level || "ok";
+  const sp = $("statusPanel"); sp.classList.remove("lv-ok", "lv-watch", "lv-warn"); sp.classList.add("lv-" + lv);
+  $("pill").textContent = { ok: "No flood expected", watch: "Heads-up", warn: "Flood likely" }[lv];
+  if (PEAK) {
+    const t = T(PEAK.t), gap = D.flood - PEAK.est;
+    const range = `${(PEAK.est - D.err).toFixed(1)}&ndash;${(PEAK.est + D.err).toFixed(1)} ft`;
+    if (lv === "warn") {
+      $("headline").textContent = `Water could reach ${ft(PEAK.est)} ${lower(when(t))}`;
+      $("detail").innerHTML = `Likely range ${range}. Your flood line is <b>${D.flood} ft</b>. Time to prep.`;
+    } else if (lv === "watch" && PEAK.est >= D.watch) {
+      $("headline").textContent = `Close call ${lower(when(t))}`;
+      $("detail").innerHTML = `High tide could get to about <b>${ft(PEAK.est)}</b> (${range}), only ${gap.toFixed(1)} ft under your ${D.flood} ft line. Big storms often push higher than this.`;
+    } else {
+      $("headline").textContent = lv === "watch" ? "NWS coastal flood alert" : soon.length ? "Next 26 hours look fine" : "No high tides in the next day";
+      $("detail").innerHTML = `Highest coming up: <b>${when(t)}</b>, about <b>${ft(PEAK.est)}</b> (${range}). That's ${gap.toFixed(1)} ft below your ${D.flood} ft flood line.`;
+    }
+  }
+  const n = $("nwsline");
+  if (D.nws && D.nws.length) { n.hidden = false; n.textContent = "NWS: " + D.nws.join(" | "); } else n.hidden = true;
+  const notes = [...(D.notes || [])]; if (staleNote) notes.unshift(staleNote);
+  const nn = $("notes"); nn.hidden = !notes.length; nn.textContent = notes.join(" · ");
+
+  /* tide staff */
+  (function staff() {
+    const lo = 10, hi = 16, y0 = 14, y1 = 236, x = 40, w = 30;
+    const Y = v => y1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (y1 - y0);
+    let s = `<rect x="${x}" y="${y0}" width="${w}" height="${y1 - y0}" rx="3" fill="var(--bg)" stroke="var(--line)"/>`;
+    s += `<rect x="${x}" y="${Y(D.flood)}" width="${w}" height="${Y(D.watch) - Y(D.flood)}" fill="var(--watch-soft)"/>`;
+    if (PEAK) {
+      const yt = Y(PEAK.est), col = { ok: "var(--water)", watch: "var(--watch)", warn: "var(--flood)" }[lv];
+      s += `<rect x="${x}" y="${yt}" width="${w}" height="${y1 - yt}" rx="2" fill="${col}" opacity=".85"/>`;
+      s += `<path d="M${x - 6} ${yt} l5 -4 v8 z" fill="${col}"/>`;
+      s += `<text x="${x - 9}" y="${yt + 4}" text-anchor="end" font-family="var(--f-num)" font-size="11" fill="var(--ink)">${PEAK.est.toFixed(1)}</text>`;
+    }
+    for (let v = lo; v <= hi + 1e-9; v += 0.5) {
+      const y = Y(v), major = Math.abs(v - Math.round(v)) < 1e-9;
+      s += `<line x1="${x + w}" x2="${x + w + (major ? 9 : 5)}" y1="${y}" y2="${y}" stroke="var(--muted)" stroke-width="1"/>`;
+      if (major) s += `<text x="${x + w + 12}" y="${y + 4}" font-family="var(--f-num)" font-size="10" fill="var(--muted)">${v}</text>`;
+    }
+    const yf = Y(D.flood);
+    s += `<line x1="${x - 4}" x2="${x + w + 4}" y1="${yf}" y2="${yf}" stroke="var(--flood)" stroke-width="2" stroke-dasharray="4 3"/>`;
+    s += `<text x="${x + w / 2}" y="${y0 - 3}" text-anchor="middle" font-family="var(--f-display)" font-size="10" letter-spacing=".06em" fill="var(--muted)">FT</text>`;
+    s += `<text x="${x + w / 2}" y="${y1 + 12}" text-anchor="middle" font-family="var(--f-display)" font-size="10" fill="var(--flood)">line ${D.flood}</text>`;
+    $("staff").innerHTML = s;
+  })();
+
+  /* chart */
+  (function chart() {
+    const svgEl = $("chart"); const W = Math.max(320, Math.min(760, Math.round(svgEl.clientWidth || 720))); const narrow = W < 520;
+    const H = narrow ? 250 : 300, L = 30, R = 8, TP = 14, B = 30; svgEl.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const t0 = +NOW - 24 * 36e5, t1 = +NOW + 48 * 36e5;
+    const vals = [...D.pred, ...D.obs, ...D.expect].map(p => p[1]);
+    const lo = Math.floor(Math.min(...vals) - 0.5), hi = Math.max(16, Math.ceil(Math.max(...vals) + 0.5));
+    const X = t => L + (t - t0) / (t1 - t0) * (W - L - R);
+    const Y = v => TP + (hi - v) / (hi - lo) * (H - TP - B);
+    let s = "";
+    const d = new Date(t0); d.setHours(18, 0, 0, 0); d.setDate(d.getDate() - 1);
+    for (; +d < t1; d.setDate(d.getDate() + 1)) {
+      const a = Math.max(+d, t0), b = Math.min(+d + 12 * 36e5, t1);
+      if (b > a) s += `<rect x="${X(a)}" y="${TP}" width="${X(b) - X(a)}" height="${H - TP - B}" fill="var(--night)"/>`;
+    }
+    for (let v = Math.ceil(lo / 2) * 2; v <= hi; v += 2) {
+      s += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" stroke-width="1"/>`;
+      s += `<text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end" font-family="var(--f-num)" font-size="12" fill="var(--muted)">${v}</text>`;
+    }
+    s += `<rect x="${L}" y="${Y(D.flood)}" width="${W - L - R}" height="${Y(D.watch) - Y(D.flood)}" fill="var(--watch-soft)"/>`;
+    s += `<line x1="${L}" x2="${W - R}" y1="${Y(D.flood)}" y2="${Y(D.flood)}" stroke="var(--flood)" stroke-width="1.5" stroke-dasharray="6 4"/>`;
+    s += `<text x="${W - R - 4}" y="${Y(D.flood) + 15}" text-anchor="end" font-family="var(--f-display)" font-size="12" fill="var(--flood)">Flood line ${D.flood}</text>`;
+    const k = new Date(t0); k.setMinutes(0, 0, 0); const stepH = narrow ? 12 : 6; k.setHours(Math.ceil(k.getHours() / stepH) * stepH);
+    for (; +k <= t1; k.setHours(k.getHours() + stepH)) {
+      const x = X(+k), mid = k.getHours() === 0;
+      s += `<line x1="${x}" x2="${x}" y1="${H - B}" y2="${H - B + (mid ? 7 : 4)}" stroke="var(--muted)"/>`;
+      const lab = mid ? dayName(k) : narrow ? "" : k.getHours() === 12 ? "Noon" : clock(k).replace(":00", "");
+      s += `<text x="${x}" y="${H - B + 20}" text-anchor="middle" font-family="${mid ? "var(--f-display)" : "var(--f-body)"}" font-size="${mid ? 13 : 12}" font-weight="${mid ? 600 : 400}" fill="${mid ? "var(--ink)" : "var(--muted)"}">${lab}</text>`;
+    }
+    const path = pts => pts.filter(p => +T(p[0]) >= t0 && +T(p[0]) <= t1).map((p, i) => `${i ? "L" : "M"}${X(+T(p[0])).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join("");
+    s += `<path d="${path(D.pred)}" fill="none" stroke="var(--pred)" stroke-width="1.5"/>`;
+    if (D.expect.length) s += `<path d="${path(D.expect)}" fill="none" stroke="var(--water)" stroke-width="2" stroke-dasharray="5 4"/>`;
+    if (D.obs.length) {
+      const p = path(D.obs), last = D.obs[D.obs.length - 1];
+      s += `<path d="${p}L${X(+T(last[0]))} ${Y(lo)}L${X(+T(D.obs[0][0]))} ${Y(lo)}Z" fill="var(--water-soft)"/>`;
+      s += `<path d="${p}" fill="none" stroke="var(--water)" stroke-width="2.25"/>`;
+      s += `<circle cx="${X(+T(last[0]))}" cy="${Y(last[1])}" r="4" fill="var(--water)" stroke="var(--surface)" stroke-width="2"/>`;
+    }
+    s += `<line x1="${X(+NOW)}" x2="${X(+NOW)}" y1="${TP}" y2="${H - B}" stroke="var(--ink)" stroke-width="1" opacity=".45"/>`;
+    s += `<text x="${X(+NOW) + 4}" y="${H - B - 6}" font-family="var(--f-display)" font-size="12" font-weight="600" fill="var(--ink)">Now</text>`;
+    for (const h of D.highs) {
+      const t = +T(h.t); if (t < t0 || t > t1) continue;
+      const v = h.past ? (h.actual ?? h.pred) : h.est;
+      const col = h.past ? "var(--water)" : { ok: "var(--water)", watch: "var(--watch)", warn: "var(--flood)" }[levelOf(h.est)];
+      const yy = Math.max(Y(v) - 9, TP + 12);
+      s += `<circle cx="${X(t)}" cy="${Y(v)}" r="3.5" fill="${col}"/>`;
+      s += `<text x="${X(t)}" y="${yy}" text-anchor="middle" font-family="var(--f-num)" font-size="13" font-weight="500" fill="var(--ink)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">${v.toFixed(1)}</text>`;
+    }
+    $("chart").innerHTML = s;
+  })();
+
+  /* high tides table */
+  (function highs() {
+    let s = `<tr><th>When</th><th class="r">Table ft</th><th class="r">Expect ft</th><th class="r hide-sm">To flood line</th><th class="r"></th></tr>`;
+    for (const h of D.highs) {
+      const t = T(h.t);
+      if (h.past) {
+        const a = h.actual;
+        s += `<tr><td>${dayName(t)}<div class="sub">${clock(t)}</div></td><td class="r num">${h.pred.toFixed(1)}</td>` +
+             `<td class="r num">${a != null ? a.toFixed(1) + '<div class="sub">measured</div>' : "&ndash;"}</td>` +
+             `<td class="r num hide-sm">${a != null ? gapTxt(D.flood - a) : ""}</td><td class="r"><span class="tag past">Past</span></td></tr>`;
+      } else {
+        const l = levelOf(h.est);
+        s += `<tr><td>${dayName(t)}<div class="sub">${clock(t)}${h.p ? ` &middot; ${Math.round(h.p)} hPa` : ""}</div></td><td class="r num">${h.pred.toFixed(1)}</td>` +
+             `<td class="r num"><b>${h.est.toFixed(1)}</b><div class="sub">${(h.est - D.err).toFixed(1)}&ndash;${(h.est + D.err).toFixed(1)}</div></td>` +
+             `<td class="r num hide-sm">${gapTxt(D.flood - h.est)}</td><td class="r"><span class="tag ${l}">${LABEL[l]}</span></td></tr>`;
+      }
+    }
+    $("highs").innerHTML = s;
+  })();
+
+  /* right now */
+  (function stats() {
+    const c = D.current || {};
+    const push = c.push ?? 0;
+    const trend = (c.p_now != null && c.p_3h != null) ? c.p_now - c.p_3h : null;
+    const tr = trend == null ? "" : trend <= -1 ? "falling" : trend >= 1 ? "rising" : "steady";
+    const items = [
+      ["Water now", c.level != null ? `${c.level.toFixed(1)} <small>ft</small>` : "&ndash;", c.level_t ? "at " + clock(T(c.level_t)) : "gauge offline"],
+      ["Storm push", `${push >= 0 ? "+" : ""}${push.toFixed(1)} <small>ft</small>`, push > 0.6 ? "water running high" : push < -0.2 ? "running low" : "near normal"],
+      ["Air pressure", c.p_now != null ? `${Math.round(c.p_now)} <small>hPa</small>` : "&ndash;", tr ? `${tr}, ${trend > 0 ? "+" : ""}${trend.toFixed(1)} in 3 h` : ""],
+      ["NWS alerts", D.nws && D.nws.length ? `${D.nws.length}` : "None", D.nws && D.nws.length ? "coastal flood" : "for Browns Point"]
+    ];
+    $("stats").innerHTML = items.map(([k, v, s]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${esc(s)}</div></div>`).join("");
+  })();
+
+  /* history */
+  (function hist() {
+    let s = `<tr><th>Date</th><th class="r">Table ft</th><th class="r">Peak ft</th><th class="r"></th></tr>`;
+    for (const h of D.history) {
+      const l = h.flooded ? "warn" : "watch";
+      s += `<tr><td>${esc(h.date)}</td><td class="r num">${h.pred.toFixed(1)}</td><td class="r num"><b>${h.peak.toFixed(1)}</b></td>` +
+           `<td class="r"><span class="tag ${l}">${h.flooded ? "Flooded" : "Close, dry"}</span></td></tr>`;
+    }
+    $("history").innerHTML = s;
+  })();
+}
+
+/* ---------------- load / refresh ---------------- */
+let lastLoad = 0, busy = false;
+function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch (e) { return null; } }
+function writeCache(d) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) { /* ignore */ } }
+
+async function refresh() {
+  if (busy) return;
+  busy = true; const btn = $("refresh"); btn.disabled = true; btn.textContent = "Loading";
+  try {
+    const d = await loadData();
+    writeCache(d); render(d); lastLoad = Date.now();
+  } catch (e) {
+    const cached = readCache();
+    if (cached) {
+      render(cached, `Couldn't reach NOAA just now, showing data from ${clock(T(cached.updated))} ${T(cached.updated).toDateString().slice(0, 10)}`);
+    } else {
+      $("pill").textContent = "No data";
+      $("headline").textContent = "Couldn't load the tides";
+      $("detail").innerHTML = `Check your connection and tap Refresh, or open the <a href="https://tidesandcurrents.noaa.gov/stationhome.html?id=9446484">NOAA Tacoma page</a>.`;
+      $("updated").textContent = "Not updated";
+    }
+  } finally {
+    busy = false; btn.disabled = false; btn.textContent = "Refresh";
+  }
+}
+$("refresh").addEventListener("click", refresh);
+let rsz; window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setTimeout(() => { const c = readCache(); if (c) render(c); }, 200); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && Date.now() - lastLoad > 5 * 60e3) refresh();
+});
+const cached0 = readCache();
+if (cached0) { try { render(cached0, "Updating…"); } catch (e) { /* ignore */ } }
+refresh();
+</script>
+</body>
+</html>
