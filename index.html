@@ -132,6 +132,16 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
 .tl-msg.err { color: var(--flood); }
 .tl-empty { color: var(--muted); margin: 0 0 12px; }
 
+.kings { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.kings h3 { font: 600 12px/1.2 var(--f-display); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
+.kings ul { list-style: none; margin: 0; padding: 0; }
+.kings li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.kings li:last-child { border-bottom: 0; }
+.kings .d { font-weight: 600; }
+.kings .h { font-family: var(--f-num); font-weight: 500; text-align: right; }
+.kings .n { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); }
+.kings .none, .kings .foot2 { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+
 @media (max-width: 560px) {
   .status { grid-template-columns: 1fr; }
   .staff { display: none; }
@@ -195,6 +205,7 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
   <section class="panel">
     <h2>Right now</h2>
     <div class="stats" id="stats"></div>
+    <div class="kings"><h3>Upcoming king tides</h3><ul id="kings"></ul><p class="foot2" id="kingsNote"></p></div>
   </section>
 
   <section class="panel" id="textPanel">
@@ -218,6 +229,7 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
 const CFG = {
   station: "9446484", lat: 47.30, lon: -122.42,
   flood: 14.4, warn: 14.0, watch: 13.5, lookahead: 26,
+  king: 12.5, kingDays: 60,   // king tide = predicted high of 12.5 ft or more; how far ahead to look
   base: 0.33, kPush: 0.33, kPushStorm: 0.75, stormP: 1000, kPress: 0.036, err: 0.35
 };
 const HISTORY = [
@@ -290,6 +302,16 @@ async function metNow(now) {
   }
 }
 
+/* Highest predicted high tide on each day over the next kingDays, keeping those at or above CFG.king. */
+async function kingTides(now) {
+  const parts = [];
+  for (let k = 0; k < CFG.kingDays; k += 30) parts.push(noaa("predictions", addH(now, k * 24), addH(now, Math.min(k + 30, CFG.kingDays) * 24), { interval: "hilo" }));
+  const rows = (await Promise.all(parts)).flat().filter(r => r.type === "H").map(r => [P(r.t), +r.v]).filter(([t]) => t > now);
+  const byDay = new Map();
+  for (const [t, v] of rows) { const k = t.toDateString(); if (!byDay.has(k) || v > byDay.get(k)[1]) byDay.set(k, [t, v]); }
+  return [...byDay.values()].filter(([, v]) => v >= CFG.king).sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t: iso(t), v: r2(v) }));
+}
+
 function pressureAt(series, t) {
   let best = null, bd = Infinity;
   for (const [tt, p] of series) { const d = Math.abs(tt - t); if (d < bd) { bd = d; best = p; } }
@@ -311,14 +333,15 @@ async function loadData() {
   const notes = [];
   const soft = async (fn, label, dflt) => { try { return await fn(); } catch (e) { notes.push(`${label} unavailable right now`); return dflt; } };
 
-  const [curveRaw, hilo, obsRaw, pushPred, pres, nws, met] = await Promise.all([
+  const [curveRaw, hilo, obsRaw, pushPred, pres, nws, met, kings] = await Promise.all([
     noaa("predictions", start, end, { interval: "30" }),
     noaa("predictions", start, end, { interval: "hilo" }),
     soft(() => noaa("water_level", start, now), "Gauge readings", []),
     soft(() => noaa("predictions", addH(now, -3), now, { interval: "6" }), "Storm push", []),
     soft(pressureForecast, "Pressure forecast", []),
     soft(nwsCoastalAlerts, "NWS alerts", []),
-    soft(() => metNow(now), "Live wind", null)
+    soft(() => metNow(now), "Live wind", null),
+    soft(() => kingTides(now), "King tide outlook", null)
   ]);
 
   const curve = curveRaw.map(r => [P(r.t), +r.v]);
@@ -368,6 +391,7 @@ async function loadData() {
     p_3h: pressureAt(pres, addH(now, -3))
   };
   d.met = met;
+  d.kings = kings;
   return d;
 }
 
@@ -578,6 +602,36 @@ function render(D, staleNote) {
     $("stats").innerHTML = items.map(([k, v, s]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${esc(s)}</div></div>`).join("");
   })();
 
+  /* upcoming king tides */
+  (function kings() {
+    const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const dateTxt = d => { const n = dayName(d); return (n === "Today" || n === "Tomorrow") ? n : `${DAYS[d.getDay()]} ${MON[d.getMonth()]} ${d.getDate()}`; };
+    const K = D.kings;
+    if (!K) { $("kings").innerHTML = ""; $("kingsNote").textContent = "King tide outlook unavailable right now."; return; }
+    // group back-to-back days into one king tide series
+    const series = [];
+    for (const k of K) {
+      const t = T(k.t), last = series[series.length - 1];
+      const day0 = new Date(t); day0.setHours(0, 0, 0, 0);
+      if (last && (day0 - last.lastDay) <= 864e5 * 1.5) { last.days.push(k); last.lastDay = day0; }
+      else series.push({ days: [k], lastDay: day0 });
+    }
+    const shown = series.slice(0, 4);
+    $("kings").innerHTML = shown.map(sr => {
+      const first = T(sr.days[0].t), lastT = T(sr.days[sr.days.length - 1].t);
+      const peak = sr.days.reduce((a, b) => (b.v > a.v ? b : a)), pt = T(peak.t), need = D.flood - peak.v;
+      const span = sr.days.length === 1 ? dateTxt(first)
+        : first.getMonth() === lastT.getMonth() ? `${DAYS[first.getDay()]} ${MON[first.getMonth()]} ${first.getDate()}\u2013${lastT.getDate()}` : `${DAYS[first.getDay()]} ${MON[first.getMonth()]} ${first.getDate()} \u2013 ${MON[lastT.getMonth()]} ${lastT.getDate()}`;
+      return `<li><span class="d">${span}${sr.days.length > 1 ? ` <span style="font-weight:400;color:var(--muted)">(${sr.days.length} days)</span>` : ""}</span>` +
+        `<span class="h">${peak.v.toFixed(1)} ft</span>` +
+        `<span class="n">Highest ${dayName(pt) === "Today" || dayName(pt) === "Tomorrow" ? dayName(pt).toLowerCase() : `${DAYS[pt.getDay()]} ${MON[pt.getMonth()]} ${pt.getDate()}`} at ${clock(pt)}. ` +
+        `${need > 0 ? `A storm push of ${need.toFixed(1)} ft would reach your line.` : "At or above your line with no storm."}</span></li>`;
+    }).join("");
+    $("kingsNote").textContent = K.length
+      ? `Tide-table highs of ${CFG.king} ft or more, next ${CFG.kingDays} days${series.length > shown.length ? ` (first ${shown.length} of ${series.length} stretches)` : ""}. Whether it floods depends on the storm and pressure that day.`
+      : `No tide-table highs of ${CFG.king} ft or more in the next ${CFG.kingDays} days.`;
+  })();
+
   /* history */
   (function hist() {
     let s = `<tr><th>Date</th><th class="r">Table ft</th><th class="r">Peak ft</th><th class="r"></th></tr>`;
@@ -695,7 +749,7 @@ function renderList() {
   const rows = people.map((p, i) => `<li><div class="tl-who"><div class="nm">${esc(p.name || "No name")}</div><div class="ph">${esc(fmtPhone(p.number))}</div></div>
     <button class="btn${armed === i ? " danger" : ""}" data-act="rm" data-i="${i}" type="button">${armed === i ? "Tap to confirm" : "Remove"}</button></li>`).join("");
   el.innerHTML = (people.length ? `<ul class="tl-list">${rows}</ul>` : `<p class="tl-empty">No one gets texts right now.</p>`) +
-    `<div class="tl-form"><input id="tlName" placeholder="Name" autocomplete="off"><input id="tlNum" type="tel" inputmode="tel" placeholder="Phone number" autocomplete="off">
+    `<div class="tl-form"><input id="tlName" placeholder="Name" autocomplete="off"><input id="tlNum" type="tel" inputmode="tel" placeholder="Phone" autocomplete="off">
      <button class="btn primary" data-act="add" type="button">Add</button></div>
      <p class="tl-msg${tlErr ? " err" : ""}">${esc(tlMsg)}</p>
      <button class="btn link" data-act="unpair" type="button">Unpair this phone</button>`;
