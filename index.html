@@ -114,6 +114,12 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
 .gauge .cap b { color: var(--ink); font-weight: 600; }
 .arrow { display: inline-block; font-weight: 700; color: var(--water); }
 .src { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+.compass { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); text-align: center; }
+.compass svg { width: 100%; max-width: 280px; height: auto; display: block; margin: 0 auto; }
+.compass .cap { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.compass .cap b { color: var(--ink); font-weight: 600; }
+#dial { transform-origin: 120px 124px; transition: transform .2s linear; }
+.compass .btn { margin-top: 10px; }
 
 .tl-list { list-style: none; margin: 0 0 14px; padding: 0; }
 .tl-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -183,6 +189,12 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
       <div class="gauge"><div class="k">Wind</div><svg id="gWind" viewBox="0 0 200 150" role="img" aria-label="Wind speed gauge"></svg><div class="cap" id="cWind">&ndash;</div></div>
       <div class="gauge"><div class="k">Pressure</div><svg id="gPres" viewBox="0 0 200 150" role="img" aria-label="Air pressure gauge"></svg><div class="cap" id="cPres">&ndash;</div></div>
     </div>
+    <div class="compass">
+      <div class="gauge"><div class="k">Wind direction</div></div>
+      <svg id="gCompass" viewBox="0 0 240 248" role="img" aria-label="Wind compass"></svg>
+      <div class="cap" id="cCompass"></div>
+      <button class="btn" id="compassBtn" type="button" hidden>Turn on live compass</button>
+    </div>
     <p class="src" id="metSrc"></p>
   </section>
 
@@ -219,7 +231,7 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
   </section>
 
   <div class="foot">
-    <p>Expected peak = tide table + 0.33 ft + one third of the storm push measured now (three quarters when forecast pressure is under 1000 hPa) + 0.036 ft for every hPa below 1013. Typical error about &plusmn;0.35 ft; big storms tend to run higher. An NWS coastal flood alert with an estimate of 13.5 ft or more counts as Flood likely.</p>
+    <p>Expected peak = tide table + 0.33 ft + one third of the storm push measured now (three quarters when the push is 1 ft or more, or pressure is under 1000 hPa or unavailable) + 0.036 ft for every hPa below 1013, plus 0.3&ndash;0.6 ft for strong onshore wind. Flood line raised to 14.9 ft after Nov 26, 2026 (14.84 ft, calm, dry). Typical error about &plusmn;0.35 ft; big storms tend to run higher. An NWS coastal flood alert with an estimate of 13.5 ft or more counts as Flood likely.</p>
     <p>Data loads live from NOAA, Open-Meteo and the National Weather Service each time you open the app. Text and push alerts still come from the 7 PM check on your Mac. <a href="https://tidesandcurrents.noaa.gov/stationhome.html?id=9446484">NOAA Tacoma page</a></p>
   </div>
 </div>
@@ -228,7 +240,9 @@ h2 { font: 600 13px/1.2 var(--f-display); text-transform: uppercase; letter-spac
 /* ---------------- settings (same as flood_watch.py) ---------------- */
 const CFG = {
   station: "9446484", lat: 47.30, lon: -122.42,
-  flood: 14.4, warn: 14.0, watch: 13.5, lookahead: 26,
+  flood: 14.9, warn: 14.4, watch: 13.5, lookahead: 26,   // flood line was 14.4; Nov 26, 2026 hit 14.84 calm and stayed dry
+  pushHolds: 1.0, onshoreFrom: [240, 60],   // WSW through N to ENE: north hits Beach Dr, west comes around the point; south is offshore
+  waveSteps: [[30, 0.6], [20, 0.3]],
   king: 12.5, kingDays: 60,   // king tide = predicted high of 12.5 ft or more; how far ahead to look
   base: 0.33, kPush: 0.33, kPushStorm: 0.75, stormP: 1000, kPress: 0.036, err: 0.35
 };
@@ -236,7 +250,8 @@ const HISTORY = [
   { date: "Dec 27, 2022", pred: 13.2, peak: 15.6, flooded: true },
   { date: "Dec 18, 2024", pred: 13.0, peak: 14.6, flooded: true },
   { date: "Nov 13, 2020", pred: 12.8, peak: 14.2, flooded: false },
-  { date: "Nov 15, 2021", pred: 12.0, peak: 13.9, flooded: false }
+  { date: "Nov 15, 2021", pred: 12.0, peak: 13.9, flooded: false },
+  { date: "Nov 26, 2026", pred: 13.0, peak: 14.8, flooded: false }
 ];
 const NOAA = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter";
 const CACHE_KEY = "floodwatch-last";
@@ -274,11 +289,16 @@ async function noaa(product, begin, end, extra = {}) {
   return j.predictions || j.data || [];
 }
 async function pressureForecast() {
-  const q = new URLSearchParams({ latitude: CFG.lat, longitude: CFG.lon, hourly: "pressure_msl",
-    timezone: "America/Los_Angeles", forecast_days: 3, past_days: 1 });
-  const j = await getJSON("https://api.open-meteo.com/v1/forecast?" + q);
-  const out = [];
-  j.hourly.time.forEach((t, i) => { const p = j.hourly.pressure_msl[i]; if (p != null) out.push([P(t), p]); });
+  const q = new URLSearchParams({ latitude: CFG.lat, longitude: CFG.lon, hourly: "pressure_msl,wind_speed_10m,wind_direction_10m",
+    wind_speed_unit: "mph", timezone: "America/Los_Angeles", forecast_days: 3, past_days: 1 });
+  let j;
+  try { j = await getJSON("https://api.open-meteo.com/v1/forecast?" + q); }
+  catch (e) { await new Promise(r => setTimeout(r, 3000)); j = await getJSON("https://api.open-meteo.com/v1/forecast?" + q); }
+  const out = []; WIND_FC = [];
+  j.hourly.time.forEach((t, i) => {
+    const p = j.hourly.pressure_msl[i]; if (p != null) out.push([P(t), p]);
+    WIND_FC.push([P(t), (j.hourly.wind_speed_10m || [])[i], (j.hourly.wind_direction_10m || [])[i]]);
+  });
   return out;
 }
 /* Live wind and pressure: NOAA's Tacoma gauge if it reports, else Open-Meteo's current model value. */
@@ -322,8 +342,21 @@ async function nwsCoastalAlerts() {
   return (j.features || []).filter(f => /coastal flood/i.test(f.properties.event || ""))
     .map(f => f.properties.headline || f.properties.event);
 }
+let WIND_FC = [];
+/* Strong onshore wind at high tide adds wave run-up the gauge doesn't see. Starting guesses. */
+function waveAllow(t) {
+  let best = null, bd = Infinity;
+  for (const w of WIND_FC) { const d = Math.abs(w[0] - t); if (d < bd) { bd = d; best = w; } }
+  if (!best || bd > 2 * 36e5 || best[1] == null || best[2] == null) return [0, ""];
+  const [lo, hi] = CFG.onshoreFrom, wd = best[2];
+  const onshore = lo <= hi ? (wd >= lo && wd <= hi) : (wd >= lo || wd <= hi);
+  if (!onshore) return [0, ""];
+  for (const [mph, ft] of CFG.waveSteps) if (best[1] >= mph) return [ft, `+${ft.toFixed(1)} ft waves, ${Math.round(best[1])} mph from ${["N","NE","E","SE","S","SW","W","NW"][Math.round(wd / 45) % 8]}`];
+  return [0, ""];
+}
 function surgeAdj(push, p) {
-  const k = (p != null && p < CFG.stormP) ? CFG.kPushStorm : CFG.kPush;
+  // storm push of 1 ft+ mostly holds overnight; with no pressure forecast, count most of it too
+  const k = (p == null || p < CFG.stormP || push >= CFG.pushHolds) ? CFG.kPushStorm : CFG.kPush;
   return CFG.base + k * push + CFG.kPress * (1013 - (p ?? 1013));
 }
 
@@ -355,7 +388,7 @@ async function loadData() {
   if (diffs.length >= 5) push = diffs.reduce((a, b) => a + b, 0) / diffs.length;
   else if (obs.length) notes.push("Storm push unavailable right now");
 
-  const adj = t => surgeAdj(push, pressureAt(pres, t));
+  const adj = t => surgeAdj(push, pressureAt(pres, t)) + waveAllow(t)[0];
   const d = { updated: iso(now), flood: CFG.flood, warn: CFG.warn, watch: CFG.watch, err: CFG.err, history: HISTORY, notes };
   d.pred = curve.map(([t, v]) => [iso(t), r2(v)]);
   const thin = obs.filter((_, i) => i % 2 === 0);
@@ -373,6 +406,7 @@ async function loadData() {
       if (near.length) h.actual = r2(Math.max(...near));
     } else {
       h.p = pressureAt(pres, t);
+      h.wave = waveAllow(t)[1];
       h.est = r2(pv + adj(t));
       h.soon = t <= addH(now, CFG.lookahead);
       if (h.soon && (top === null || h.est > top)) top = h.est;
@@ -533,7 +567,7 @@ function render(D, staleNote) {
              `<td class="r num hide-sm">${a != null ? gapTxt(D.flood - a) : ""}</td><td class="r"><span class="tag past">Past</span></td></tr>`;
       } else {
         const l = levelOf(h.est);
-        s += `<tr><td>${dayName(t)}<div class="sub">${clock(t)}${h.p ? ` &middot; ${Math.round(h.p)} hPa` : ""}</div></td><td class="r num">${h.pred.toFixed(1)}</td>` +
+        s += `<tr><td>${dayName(t)}<div class="sub">${clock(t)}${h.p ? ` &middot; ${Math.round(h.p)} hPa` : ""}${h.wave ? `<br>${esc(h.wave)}` : ""}</div></td><td class="r num">${h.pred.toFixed(1)}</td>` +
              `<td class="r num"><b>${h.est.toFixed(1)}</b><div class="sub">${(h.est - D.err).toFixed(1)}&ndash;${(h.est + D.err).toFixed(1)}</div></td>` +
              `<td class="r num hide-sm">${gapTxt(D.flood - h.est)}</td><td class="r"><span class="tag ${l}">${LABEL[l]}</span></td></tr>`;
       }
@@ -582,6 +616,7 @@ function render(D, staleNote) {
     const tw = trend == null ? "" : trend <= -1 ? "falling" : trend >= 1 ? "rising" : "steady";
     $("cPres").innerHTML = p != null ? `<b>${(p * 0.02953).toFixed(2)}</b> inHg` + (tw ? ` &middot; ${tw}${tw === "steady" ? "" : ` ${Math.abs(trend).toFixed(1)} hPa`} in 3 h` : "") : "No pressure data";
 
+    drawCompass(M);
     $("metSrc").textContent = M ? `${M.src}, ${clock(T(M.t))}. The red mark on the wind dial is the gust.` : "Live wind and pressure unavailable right now.";
   })();
 
@@ -674,6 +709,73 @@ let rsz; window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setT
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && Date.now() - lastLoad > 5 * 60e3) { refresh(); loadList(); }
 });
+/* ---------------- wind compass ----------------
+   Dial shows true north; with the phone compass on, it turns so N points to real north
+   and the wind arrow lines up with the real wind. Tacoma magnetic declination ~15 deg E. */
+const DECL = 15.2;
+let headingDeg = 0, headingLive = false, unwrapped = 0;
+function drawCompass(M) {
+  const cx = 120, cy = 124, R = 92;
+  const P2 = (deg, r) => { const a = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+  const [lo, hi] = CFG.onshoreFrom, span = ((hi - lo) % 360 + 360) % 360;
+  const [sx, sy] = P2(lo, R - 7), [ex, ey] = P2(lo + span, R - 7);
+  let g = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="var(--bg)" stroke="var(--line)" stroke-width="1.5"/>`;
+  g += `<path d="M${sx.toFixed(1)} ${sy.toFixed(1)} A${R - 7} ${R - 7} 0 ${span > 180 ? 1 : 0} 1 ${ex.toFixed(1)} ${ey.toFixed(1)}" fill="none" stroke="var(--flood)" stroke-width="14" opacity=".22"/>`;
+  for (let d = 0; d < 360; d += 10) {
+    const big = d % 90 === 0, mid = d % 30 === 0, [x0, y0] = P2(d, R - 1), [x1, y1] = P2(d, R - (big ? 14 : mid ? 10 : 6));
+    g += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="${big ? "var(--ink)" : "var(--muted)"}" stroke-width="${big ? 2 : 1}"/>`;
+  }
+  for (const [d, t] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]]) {
+    const [x, y] = P2(d, R - 26);
+    g += `<text x="${x.toFixed(1)}" y="${(y + 5).toFixed(1)}" text-anchor="middle" font-family="var(--f-display)" font-size="16" font-weight="700" fill="${d === 0 ? "var(--flood)" : "var(--ink)"}">${t}</text>`;
+  }
+  if (M && M.dir != null) {
+    const from = M.dir, [fx, fy] = P2(from, R - 18), [tx, ty] = P2(from + 180, R - 18);
+    const [hx1, hy1] = P2(from + 180 - 9, R - 34), [hx2, hy2] = P2(from + 180 + 9, R - 34);
+    g += `<line x1="${fx.toFixed(1)}" y1="${fy.toFixed(1)}" x2="${tx.toFixed(1)}" y2="${ty.toFixed(1)}" stroke="var(--water)" stroke-width="4" stroke-linecap="round"/>`;
+    g += `<path d="M${tx.toFixed(1)} ${ty.toFixed(1)} L${hx1.toFixed(1)} ${hy1.toFixed(1)} L${hx2.toFixed(1)} ${hy2.toFixed(1)} Z" fill="var(--water)"/>`;
+    g += `<circle cx="${fx.toFixed(1)}" cy="${fy.toFixed(1)}" r="5" fill="var(--surface)" stroke="var(--water)" stroke-width="3"/>`;
+  }
+  let s = `<g id="dial" style="transform:rotate(${unwrapped}deg)">${g}</g>`;
+  // fixed marker: top of the phone
+  s += `<path d="M${cx} ${cy - R - 2} l-7 -12 h14 z" fill="var(--ink)"/>`;
+  s += `<circle cx="${cx}" cy="${cy}" r="30" fill="var(--surface)" stroke="var(--line)"/>`;
+  s += `<text x="${cx}" y="${cy + 3}" text-anchor="middle" font-family="var(--f-num)" font-size="20" font-weight="500" fill="var(--ink)">${M && M.wind != null ? Math.round(M.wind) : "&ndash;"}</text>`;
+  s += `<text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="var(--f-body)" font-size="10" fill="var(--muted)">mph</text>`;
+  $("gCompass").innerHTML = s;
+  const DIRS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  const dirTxt = M && M.dir != null ? DIRS[Math.round(((M.dir % 360) + 360) % 360 / 22.5) % 16] : null;
+  const ons = M && M.dir != null && (() => { const w = M.dir; return lo <= hi ? (w >= lo && w <= hi) : (w >= lo || w <= hi); })();
+  $("cCompass").innerHTML = (dirTxt ? `Wind from <b>${dirTxt}</b> (${Math.round(M.dir)}&deg;)${ons ? ` &middot; <b style="color:var(--flood)">onshore</b>` : " &middot; offshore"}. ` : "No wind direction right now. ") +
+    `Red band: winds that push waves at your house.` + (headingLive ? " Hold the phone flat; the dial turns to real north." : "");
+}
+function setHeading(h) {
+  if (h == null || isNaN(h)) return;
+  const target = -(((h + DECL) % 360) + 360) % 360;   // rotate dial opposite to heading
+  let delta = ((target - unwrapped) % 360 + 540) % 360 - 180;   // shortest turn
+  unwrapped += delta;
+  const d = document.getElementById("dial"); if (d) d.style.transform = `rotate(${unwrapped}deg)`;
+}
+function onOrient(e) {
+  if (e.webkitCompassHeading != null) { headingLive = true; setHeading(e.webkitCompassHeading); return; }  // iOS: magnetic heading
+  if (e.absolute && e.alpha != null) { headingLive = true; setHeading(360 - e.alpha); }
+}
+(function setupCompass() {
+  const btn = $("compassBtn");
+  if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function" && ("ontouchstart" in window)) {
+    btn.hidden = false;   // iPhone: needs a tap to allow
+    btn.addEventListener("click", async () => {
+      try {
+        const r = await DeviceOrientationEvent.requestPermission();
+        if (r === "granted") { window.addEventListener("deviceorientation", onOrient); btn.hidden = true; }
+        else btn.textContent = "Compass not allowed";
+      } catch (e) { btn.textContent = "Compass not available"; }
+    });
+  } else if ("ondeviceorientationabsolute" in window && ("ontouchstart" in window)) {
+    window.addEventListener("deviceorientationabsolute", onOrient);   // Android
+  }
+})();
+
 /* ---------------- text alert list ----------------
    The list lives on the Mac (text_to.txt). This phone sends the whole list to a
    private ntfy topic; the Mac checks it every hour, applies it and posts it back. */
